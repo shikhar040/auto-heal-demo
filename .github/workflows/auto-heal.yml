@@ -8,60 +8,106 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      RESULT: ${{ steps.test_step.outputs.RESULT }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-      - id: run_tests
+      - name: Run tests
+        id: test_step
         run: |
-          set -o pipefail
-          npm test 2>&1 | tee test-output.log || true
-          echo "::set-output name=RESULT::$(if grep -q 'FAIL' test-output.log; then echo failed; else echo passed; fi)"
+          npm test || echo "TEST_FAILED=true" >> $GITHUB_OUTPUT
+          if [ -f test-output.log ]; then
+            echo "RESULT=failed" >> $GITHUB_OUTPUT
+          else
+            echo "RESULT=passed" >> $GITHUB_OUTPUT
+          fi
 
   auto_heal:
     needs: test
-    runs-on: ubuntu-latest
     if: needs.test.outputs.RESULT == 'failed'
+    runs-on: ubuntu-latest
+    outputs:
+      RESULT2: ${{ steps.after_fix.outputs.RESULT2 }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (full)
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - run: npm ci
+      - name: Install deps
+        run: npm ci
 
-      - run: |
+      - name: Attempt automatic fix (eslint --fix)
+        run: |
           npm run fix || true
           if [ -n "$(git status --porcelain)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "shikhar040"
+            git config user.email "dixitshikhar004@gmail.com"
             git add -A
-            git commit -m "chore: auto-fix [skip ci]"
-            git push origin HEAD:main
+            git commit -m "chore: auto-fix [skip ci]" || true
+            git push origin main || true
+          fi
+
+      - name: Re-run tests after auto-fix
+        id: after_fix
+        run: |
+          if npm test; then
+            echo "RESULT2=passed" >> $GITHUB_OUTPUT
+          else
+            echo "RESULT2=failed" >> $GITHUB_OUTPUT
           fi
 
   rollback:
-    needs: auto_heal
+    needs: [test, auto_heal]
+    if: needs.auto_heal.outputs.RESULT2 == 'failed'
     runs-on: ubuntu-latest
-    if: always()
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - run: |
+      - name: Configure git identity for rollback
+        run: |
+          git config user.name "shikhar040"
+          git config user.email "dixitshikhar004@gmail.com"
+
+      - name: Revert last commit
+        run: |
           LAST_COMMIT=$(git rev-parse HEAD)
-          git revert --no-edit $LAST_COMMIT
-          git push origin HEAD:main
+          echo "Reverting commit: $LAST_COMMIT"
+          git revert --no-edit $LAST_COMMIT || true
+          git add -A
+          git commit -m "revert: auto-revert failing commit [skip ci]" || true
+          git push origin main || true
+
+      - name: Create rollback issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "Auto-Heal Pipeline Performed Rollback",
+              body: "The pipeline detected a failing commit and automatically reverted it."
+            })
