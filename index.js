@@ -1,5 +1,5 @@
-function add(a, b) {
-  return a - b;   // broken
+function multiply(a, b) {
+  return a * b;
 }
 
-module.exports = { add };
+module.exports = { multiply };
