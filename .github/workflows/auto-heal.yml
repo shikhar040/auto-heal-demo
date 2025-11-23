@@ -1,0 +1,67 @@
+name: Auto-Heal CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - run: npm ci
+
+      - id: run_tests
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log || true
+          echo "::set-output name=RESULT::$(if grep -q 'FAIL' test-output.log; then echo failed; else echo passed; fi)"
+
+  auto_heal:
+    needs: test
+    runs-on: ubuntu-latest
+    if: needs.test.outputs.RESULT == 'failed'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - run: npm ci
+
+      - run: |
+          npm run fix || true
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: auto-fix [skip ci]"
+            git push origin HEAD:main
+          fi
+
+  rollback:
+    needs: auto_heal
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - run: |
+          LAST_COMMIT=$(git rev-parse HEAD)
+          git revert --no-edit $LAST_COMMIT
+          git push origin HEAD:main

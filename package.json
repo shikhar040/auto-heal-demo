@@ -1,0 +1,13 @@
+{
+  "name": "auto-heal-demo",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest --runInBand",
+    "lint": "eslint . --ext .js",
+    "fix": "eslint . --ext .js --fix"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0"
+  }
+}
